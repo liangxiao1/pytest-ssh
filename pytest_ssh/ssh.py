@@ -8,9 +8,10 @@ log = logging.getLogger(__name__)
 
 
 class SSH(object):
-    def __init__(self, hostname=None, username=None, keyfile=None, port=22, timeout=60):
+    def __init__(self, hostname=None, username=None, password=None, keyfile=None, port=22, timeout=60):
         self.hostname = hostname
         self.username = username
+        self.password = password
         self.keyfile = keyfile
         self.port = port
         self.timeout = timeout
@@ -25,12 +26,12 @@ class SSH(object):
                 end_time = time.time()
                 if end_time-start_time > self.timeout:
                     log.error("Unable to make connection!")
-                    pytest.fail(ms='Unable to make connection to %s!' %
+                    pytest.fail(msg='Unable to make connection to %s!' %
                                 (self.hostname))
                 if self.keyfile is None:
                     self.ssh_client.load_system_host_keys()
                     self.ssh_client.connect(
-                        self.hostname, username=self.username)
+                        self.hostname, username=self.username, password=self.password)
                 else:
                     self.ssh_client.connect(
                         self.hostname,
