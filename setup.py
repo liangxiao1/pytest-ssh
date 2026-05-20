@@ -1,12 +1,12 @@
 from setuptools import setup, find_packages
 
-version = '0.1.1'
+version = '0.2.1'
 
 setup(name='pytest-ssh',
       version=version,
       description="pytest plugin for ssh command run",
       author='Xiao Liang',
-      author_email='xiliang@redhat.com',
+      author_email='teddy.x.liang@hotmail.com',
       url='https://github.com/liangxiao1/pytest-ssh',
       packages=find_packages(exclude=['tests']),
       include_package_data=True,

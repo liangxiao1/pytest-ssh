@@ -1,51 +1,99 @@
 import logging
 import paramiko
+from paramiko import BadHostKeyException
 import pytest
 import sys
+import os
 import time
 
 log = logging.getLogger(__name__)
 
 
 class SSH(object):
-    def __init__(self, hostname=None, username=None, password=None, keyfile=None, port=22, timeout=60):
+    def __init__(self, hostname=None, username=None, password=None, keyfile=None, port=22, timeout=60, interval=5):
+        self.log = logging.getLogger(__name__)
         self.hostname = hostname
         self.username = username
         self.password = password
         self.keyfile = keyfile
         self.port = port
         self.timeout = timeout
+        self.interval = interval
+        self.ssh_client = None
 
     def connect(self):
+        self.log.info("Try to make connection {}@{}:{}".format(self.username, self.hostname, self.port))
         self.ssh_client = paramiko.SSHClient()
         self.ssh_client.load_system_host_keys()
-        self.ssh_client.set_missing_host_key_policy(paramiko.WarningPolicy())
+        self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         start_time = time.time()
         while True:
+            badhostkey = False
             try:
                 end_time = time.time()
                 if end_time-start_time > self.timeout:
-                    log.error("Unable to make connection!")
-                    pytest.fail(msg='Unable to make connection to %s!' %
-                                (self.hostname))
-                if self.keyfile is None:
+                    log.info("timeout({}s) to make connection!".format(self.timeout))
+                    return None
+                if self.keyfile is None and self.password is None:
+                    log.info("no password or keyfile for ssh access, use default ssh key setting")
                     self.ssh_client.load_system_host_keys()
-                    self.ssh_client.connect(
-                        self.hostname, username=self.username, password=self.password)
-                else:
+                    self.ssh_client.connect(self.hostname, port=self.port, username=self.username)
+                elif self.password is not None:
+                    log.info("login system using password")
                     self.ssh_client.connect(
                         self.hostname,
+                        port=self.port,
                         username=self.username,
-                        key_filename=self.keyfile,
+                        password=self.password,
                         look_for_keys=False,
-                        timeout=self.timeout
+                        allow_agent=False,
+                        timeout=60
                     )
-                break
+                else:
+                    log.info("login system using keyfile:{}".format(self.keyfile))
+                    if not os.path.exists(self.keyfile):
+                        log.error("{} not found".format(self.keyfile))
+                        return None
+                    exception_list=[]
+                    pkey_RSAKey = paramiko.RSAKey.from_private_key_file(self.keyfile)
+                    try:
+                        log.info("Try to use {}".format(pkey_RSAKey.get_name()))
+                        self.ssh_client.connect(
+                            self.hostname,
+                            port=self.port,
+                            username=self.username,
+                            #key_filename=rmt_keyfile,
+                            pkey=pkey_RSAKey,
+                            look_for_keys=False,
+                            timeout=60
+                        )
+                        return self.ssh_client
+                    except BadHostKeyException as e:
+                        badhostkey = True
+                        exception_list.append(e)
+                    except Exception as e:
+                        exception_list.append(e)         
+                    raise Exception(exception_list)
+                return self.ssh_client
             except Exception as e:
-                log.info(msg="*** Failed to connect to %s:%d: %r" %
-                         (self.hostname, self.port, e))
-                log.info("Retry more times!")
-                time.sleep(10)
+                log.info("*** Failed to connect to {}: {}".format(self.hostname, e))
+                if 'Name or service not known' in str(e):
+                    break
+                log.info("Retry again, timeout {}!".format(self.timeout))
+                time.sleep(self.interval)
+                if 'does not match' in str(e) or badhostkey:
+                    try:
+                        know_hosts = paramiko.hostkeys.HostKeys(filename=os.path.expanduser("~/.ssh/known_hosts"))
+                        know_hosts.lookup(self.hostname)
+                        log.info("try to remove {} from known_hosts".format(self.hostname))
+                        know_hosts.pop(self.hostname)
+                        know_hosts.save(os.path.expanduser("~/.ssh/known_hosts"))
+                        self.ssh_client = paramiko.SSHClient()
+                        self.ssh_client.load_system_host_keys()
+                        self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    except Exception as e:
+                        log.info('exception while cleaning known_hosts: {}'.format(e))
+            return None
 
     def isalive(self):
         self.run_cmd('\n', expect_ret=0,
@@ -118,3 +166,34 @@ class SSH(object):
 
         log.info("CMD out:%s" % output)
         return status, output
+
+    def put_file(self, local_file = None, rmt_file = None):
+        if os.path.isdir(local_file):
+            log.info("{} is dir, only file supported now.".format(local_file))
+            return False
+        log.info('sending {} from local to remote {}'.format(local_file,rmt_file))
+        if not os.path.exists(local_file):
+            log.info('{} not found'.format(local_file))
+            return False
+        self.ftp_client = self.ssh_client.open_sftp()
+        try:
+            self.ftp_client.put(local_file, rmt_file)
+        except FileNotFoundError:
+            self.log.info('{} must be a filename or not found on remote'.format(rmt_file))
+            return False
+        self.ftp_client.close()
+        return True
+
+    def get_file(self, rmt_file = None, local_file = None):
+        log.info('retriving {} from remote to local {}'.format(rmt_file,local_file))
+        if os.path.isdir(local_file):
+            self.log.info("{} is dir, only file supported now.".format(local_file))
+            return False
+        self.ftp_client = self.ssh_client.open_sftp()
+        try:
+            self.ftp_client.get(rmt_file,local_file)
+        except FileNotFoundError:
+            self.log.info('{} must be a filename or not found on remote'.format(rmt_file))
+            return False
+        self.ftp_client.close()
+        return True
