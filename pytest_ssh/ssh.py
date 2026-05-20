@@ -116,7 +116,7 @@ class SSH(object):
             msg {string} -- addtional info to mark cmd run.
 
         Return:
-            (status, output) -- cmd return code and output
+            (status, output) -- cmd return code and output(stdout+stderr)
 
         """
         if msg is not None:
@@ -139,9 +139,13 @@ class SSH(object):
             for line in output:
                 log.info("%s" % line.rstrip('\n'))
             output = ''.join(output)
+
             log.info("cmd error:")
-            for line in stderr.readlines():
+            errlog = stderr.readlines()
+            for line in errlog:
                 log.info("%s" % line.rstrip('\n'))
+            errlog = ''.join(errlog)
+            output = ''.join(output+errlog)
         except Exception as e:
             log.info("Cannot get output/error: %s" % e)
 
